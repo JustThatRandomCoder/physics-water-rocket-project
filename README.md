@@ -24,8 +24,8 @@
 | **Project** | Water Rocket Engineering Project |
 | **Author** | Julius Grimm |
 | **Course** | Physics / Engineering |
-| **School** | — |
-| **Date** | — |
+| **School** | Uhland-Gymnasium Tübingen |
+| **Date** | 06.07.2026 |
 
 ---
 
