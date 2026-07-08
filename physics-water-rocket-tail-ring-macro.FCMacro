@@ -1,0 +1,521 @@
+#!/usr/bin/env python3
+# ======================================================================
+#  WASSERRAKETE - FLOSSEN-NOZZLE-ADAPTER FUER DEN FLASCHENHALS
+#  Schraubt sich OBEN auf den Flaschenkopf/Hals (echtes Innengewinde,
+#  ersetzt den Original-Deckel). Flossen sitzen buendig auf dem
+#  Ringkoerper darunter. UNTEN sitzt eine Schlauchtuelle: aussen mit
+#  Widerhaken-Rippen zum Aufschieben eines Schlauchs, innen ein
+#  durchgehender Kanal, der bis zum Flaschenhals hochfuehrt.
+#
+#  Das ist die aerodynamisch korrekte Anordnung fuer den Flug: Hals
+#  zeigt beim Start nach unten (Duesen-Ende), Flossen sitzen dort wo
+#  sie hingehoeren - am Heck, nicht am Bug.
+#
+#  ALLE MASSE IN ZENTIMETER (cm). Skript rechnet intern in mm um.
+#  Abhaengigkeiten: nur numpy + scipy (kein CadQuery/OpenSCAD noetig)
+# ======================================================================
+
+import os
+import numpy as np
+from scipy.spatial import ConvexHull
+import struct
+
+CM = 10.0   # 1 cm = 10 mm -> Umrechnungsfaktor, NICHT AENDERN
+
+# ======================================================================
+#  MODUS
+#  "kalibrierung" -> nur ein kurzer Gewindering (Testdruck fuer die
+#                    Gewindepassung, IMMER ZUERST damit testen!)
+#  "voll"         -> komplettes Bauteil: Gewinde + Flossen + Schlauchtuelle
+# ======================================================================
+MODUS = "voll"
+KALIBRIERRING_HOEHE_CM = 1.5
+
+
+# ======================================================================
+#  PARAMETER: GEWINDE (schraubt sich auf den Flaschenhals/-kopf)
+#  PCO1881-Richtwerte als Default - NACHMESSEN/PRUEFEN an deiner Flasche!
+# ======================================================================
+GEWINDE_AUSSEN_DURCHMESSER_CM = 2.60   # cm - Aussendurchmesser ueber die Gewinderippen. NACHMESSEN!
+GEWINDE_KERN_DURCHMESSER_CM   = 2.16   # cm - Kerndurchmesser (glatter Hals unter dem Gewinde). NACHMESSEN!
+GEWINDE_STEIGUNG_CM           = 0.37   # cm - Steigung (Pitch) pro Gewindegang. NACHMESSEN!
+GEWINDE_STARTS                = 2      # Anzahl paralleler Gewindeanfaenge. NACHZAEHLEN!
+GEWINDE_HOEHE_CM              = 1.0    # cm - Hoehe der Gewindezone (Eingriffslaenge)
+GEWINDE_ZAHNBREITE_CM         = 0.14   # cm - axiale Breite jedes Gewindezahns
+GEWINDE_SPIEL_CM              = 0.03   # cm - Spiel am Kerndurchmesser, damit es nicht klemmt
+GEWINDE_WANDSTAERKE_CM        = 0.3    # cm - Restwand aussen um das Gewinde/den Ring herum
+
+# ======================================================================
+#  PARAMETER: SCHULTER-UEBERLAPP (oben) - das Bauteil wird komplett UEBER
+#  Hals+Schulter der Flasche gestuelpt, das Gewinde sitzt tiefer drin im
+#  Trichter (genau wie bei der Nasenspitze). Aussen bleibt dadurch alles
+#  eine Flucht, keine Stufe am Flaschenkopf sichtbar.
+# ======================================================================
+FLASCHEN_SCHULTER_DURCHMESSER_CM = 6.3  # cm - Aussendurchmesser der Flasche an der Schulter. NACHMESSEN!
+SCHULTER_SPIEL_CM       = 0.2    # cm - Spiel im Hohlraum, damit die Flasche leicht reingleitet
+UEBERLAPP_TIEFE_CM      = 1.5    # cm - wie weit das Bauteil oben UEBER die Schulter uebergreift
+UEBERGANG_OBEN_LAENGE_CM = 1.5   # cm - Trichter von Schulterbreite auf Gewindebreite
+UEBERGANG_OBEN_VERRUNDUNG_CM = 0.4  # cm - Verrundung an den Enden dieses oberen Trichters
+
+# ======================================================================
+#  PARAMETER: RINGZONE (Flossen sitzen hier buendig)
+# ======================================================================
+RING_HOEHE_CM        = 4.2    # cm - Hoehe der Ringzone unterhalb des Gewindes
+RAND_VERRUNDUNG_CM   = 0.15   # cm - Verrundung ganz oben am offenen Rand (Schulter-Oeffnung)
+
+# ======================================================================
+#  PARAMETER: FLOSSEN (buendig auf der Ringzone, ragen nicht darueber hinaus)
+# ======================================================================
+FLOSSEN_ANZAHL           = 4
+FLOSSEN_SPANNWEITE_CM    = 5.5
+FLOSSEN_WURZEL_LAENGE_CM = 4.2    # darf RING_HOEHE_CM NICHT ueberschreiten!
+FLOSSEN_SPITZE_LAENGE_CM = 1.8
+FLOSSEN_PFEILUNG_CM      = 1.0
+FLOSSEN_WURZEL_DICKE_CM  = 0.45
+FLOSSEN_SPITZE_DICKE_CM  = 0.18
+FLOSSEN_EINBETTUNG_CM    = 0.3
+FLOSSEN_WURZEL_VERRUNDUNG_CM = 0.25
+
+# ======================================================================
+#  PARAMETER: UEBERGANG + SCHLAUCHTUELLE (unteres Ende)
+# ======================================================================
+UEBERGANG_UNTEN_LAENGE_CM   = 1.5    # cm - Verjuengung von Ringbreite auf Tuellenbreite
+UEBERGANG_UNTEN_VERRUNDUNG_CM = 0.3
+
+SCHLAUCH_INNENDURCHMESSER_CM = 0.8   # cm - Innendurchmesser DEINES Schlauchs. NACHMESSEN!
+TUELLE_UEBERMASS_CM          = 0.15  # cm - wie viel dicker die Tuelle vs. Schlauch-ID ist (Presssitz)
+TUELLE_WANDSTAERKE_CM        = 0.25  # cm - Restwand der Tuelle um den Kanal herum
+TUELLE_LAENGE_CM             = 2.5   # cm - Gesamtlaenge der Tuelle
+TUELLE_RIPPEN_ANZAHL         = 3     # Anzahl Widerhaken-Rippen
+TUELLE_RIPPEN_HOEHE_CM       = 0.12  # cm - wie weit jede Rippe uebersteht
+KANAL_DURCHMESSER_CM         = 0.7   # cm - Innendurchmesser des durchgehenden Kanals (Luft/Wasser-Weg).
+                                       #      Sollte <= SCHLAUCH_INNENDURCHMESSER_CM sein.
+
+# --- Aufloesung ---
+N_THETA         = 128
+FILLET_SEGMENTE = 8
+KUGEL_PUNKTE    = 30
+GEWINDE_SCHRITTE_PRO_UMDREHUNG = 48
+
+AUSGABE_DATEI = os.path.join(
+    os.path.expanduser("~"), "Desktop",
+    "kalibrier_gewindering.stl" if MODUS == "kalibrierung" else "flossen_nozzle_adapter.stl"
+)
+
+
+# ======================================================================
+#  Sicherheits-Checks
+# ======================================================================
+assert FLOSSEN_WURZEL_LAENGE_CM <= RING_HOEHE_CM + 1e-9, \
+    "FLOSSEN_WURZEL_LAENGE_CM darf RING_HOEHE_CM nicht ueberschreiten!"
+assert FLOSSEN_PFEILUNG_CM + FLOSSEN_SPITZE_LAENGE_CM <= RING_HOEHE_CM + 1e-9, \
+    "FLOSSEN_PFEILUNG_CM + FLOSSEN_SPITZE_LAENGE_CM darf RING_HOEHE_CM nicht ueberschreiten!"
+assert KANAL_DURCHMESSER_CM <= SCHLAUCH_INNENDURCHMESSER_CM + 1e-9, \
+    "KANAL_DURCHMESSER_CM sollte nicht groesser als der Schlauch-Innendurchmesser sein."
+assert FLASCHEN_SCHULTER_DURCHMESSER_CM > GEWINDE_AUSSEN_DURCHMESSER_CM, \
+    "FLASCHEN_SCHULTER_DURCHMESSER_CM sollte groesser sein als der Gewindedurchmesser."
+
+
+# ======================================================================
+#  Generische Hilfsfunktionen
+# ======================================================================
+def unit2(v):
+    n = np.linalg.norm(v)
+    return v / n if n > 1e-12 else v
+
+
+def fillet_corner_2d(p_prev, p_corner, p_next, radius, n_seg=FILLET_SEGMENTE):
+    if radius <= 1e-9:
+        return [p_corner]
+    v1, v2 = p_prev - p_corner, p_next - p_corner
+    len1, len2 = np.linalg.norm(v1), np.linalg.norm(v2)
+    if len1 < 1e-9 or len2 < 1e-9:
+        return [p_corner]
+    u1, u2 = v1 / len1, v2 / len2
+    ang = np.arccos(np.clip(np.dot(u1, u2), -1.0, 1.0))
+    if ang < 1e-6 or ang > np.pi - 1e-6:
+        return [p_corner]
+    tan_dist = radius / np.tan(ang / 2)
+    tan_dist = min(tan_dist, len1 * 0.9, len2 * 0.9)
+    r_eff = tan_dist * np.tan(ang / 2)
+    t1 = p_corner + u1 * tan_dist
+    t2 = p_corner + u2 * tan_dist
+    bis = unit2(u1 + u2)
+    center = p_corner + bis * (r_eff / np.sin(ang / 2))
+    a1 = np.arctan2(t1[1] - center[1], t1[0] - center[0])
+    a2 = np.arctan2(t2[1] - center[1], t2[0] - center[0])
+    da = (a2 - a1 + np.pi) % (2 * np.pi) - np.pi
+    return [center + r_eff * np.array([np.cos(a1 + da * k / n_seg),
+                                        np.sin(a1 + da * k / n_seg)])
+            for k in range(n_seg + 1)]
+
+
+def build_profile_from_corners(corners):
+    pts_only = [c[0] for c in corners]
+    n = len(corners)
+    profile = []
+    for i in range(n):
+        p_prev = pts_only[i - 1]
+        p_corner, radius = corners[i]
+        p_next = pts_only[(i + 1) % n]
+        profile.extend(fillet_corner_2d(p_prev, p_corner, p_next, radius))
+    return np.array(profile)
+
+
+def revolve_profile(profile_2d):
+    M = len(profile_2d)
+    thetas = np.linspace(0, 2 * np.pi, N_THETA, endpoint=False)
+    verts = np.zeros((N_THETA, M, 3))
+    for i, th in enumerate(thetas):
+        verts[i, :, 0] = profile_2d[:, 0] * np.cos(th)
+        verts[i, :, 1] = profile_2d[:, 0] * np.sin(th)
+        verts[i, :, 2] = profile_2d[:, 1]
+    triangles = []
+    for i in range(N_THETA):
+        i2 = (i + 1) % N_THETA
+        for j in range(M):
+            j2 = (j + 1) % M
+            a, b = verts[i, j], verts[i, j2]
+            c, d = verts[i2, j2], verts[i2, j]
+            triangles.append((a, b, c))
+            triangles.append((a, c, d))
+    tri = np.array(triangles)
+    return drop_degenerate(fix_orientation_outward(tri))
+
+
+def fix_orientation_outward(tri):
+    centroids = tri.mean(axis=1)
+    r_xy = np.linalg.norm(centroids[:, :2], axis=1)
+    idx = np.argmax(r_xy)
+    a, b, c = tri[idx]
+    normal = np.cross(b - a, c - a)
+    outward_ref = np.array([centroids[idx, 0], centroids[idx, 1], 0.0])
+    if np.dot(normal, outward_ref) < 0:
+        tri = tri[:, [0, 2, 1], :]
+    return tri
+
+
+def drop_degenerate(tri, min_area=1e-8):
+    a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
+    areas = 0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1)
+    return tri[areas > min_area]
+
+
+def write_binary_stl(path, triangles, header=b"Flossen Nozzle Adapter"):
+    n = len(triangles)
+    with open(path, "wb") as f:
+        f.write(header.ljust(80, b"\0")[:80])
+        f.write(struct.pack("<I", n))
+        for tri in triangles:
+            a, b, c = tri
+            normal = np.cross(b - a, c - a)
+            norm_len = np.linalg.norm(normal)
+            if norm_len > 1e-12:
+                normal = normal / norm_len
+            f.write(struct.pack("<3f", *normal))
+            for v in (a, b, c):
+                f.write(struct.pack("<3f", *v))
+            f.write(struct.pack("<H", 0))
+
+
+def open_file_os(path):
+    try:
+        import platform
+        import subprocess
+        system = platform.system()
+        if system == "Darwin":
+            subprocess.run(["open", path], check=False)
+        elif system == "Windows":
+            os.startfile(path)  # noqa
+        else:
+            subprocess.run(["xdg-open", path], check=False)
+    except Exception as e:
+        print(f"Konnte Datei nicht automatisch oeffnen ({e}). Bitte manuell oeffnen: {path}")
+
+
+def insert_into_freecad(path, doc_name):
+    try:
+        import FreeCAD
+        import Mesh
+        doc = FreeCAD.ActiveDocument
+        if doc is None:
+            doc = FreeCAD.newDocument(doc_name)
+        Mesh.insert(path, doc.Name)
+        doc.recompute()
+        try:
+            FreeCADGui = __import__("FreeCADGui")
+            FreeCADGui.ActiveDocument.ActiveView.viewIsometric()
+            FreeCADGui.SendMsgToActiveView("ViewFit")
+        except Exception:
+            pass
+        return True
+    except ImportError:
+        return False
+
+
+# ======================================================================
+#  HELIX-GEWINDE (identisch zum Ansatz aus der Nasenspitze)
+# ======================================================================
+FILLET_ZAHN = 0.0
+
+def build_helical_thread(major_r, minor_r, pitch, starts, hoehe_gewinde,
+                          zahnbreite, z_start, embed=1.5):
+    all_tris = []
+    turns = hoehe_gewinde / pitch
+    total_angle = turns * 2 * np.pi
+    n_steps = max(int(GEWINDE_SCHRITTE_PRO_UMDREHUNG * turns), 8)
+    ts = np.linspace(0, total_angle, n_steps)
+
+    w = zahnbreite
+    local_corners = [
+        (np.array([-w / 2, major_r + embed]), 0.0),
+        (np.array([-w / 4, minor_r]), FILLET_ZAHN),
+        (np.array([w / 4, minor_r]), FILLET_ZAHN),
+        (np.array([w / 2, major_r + embed]), 0.0),
+    ]
+    local_ring = build_profile_from_corners(local_corners)
+    M = len(local_ring)
+
+    for start_idx in range(starts):
+        theta_off = start_idx * (2 * np.pi / starts)
+        z_off = start_idx * (pitch / starts)
+
+        rings = np.zeros((n_steps, M, 3))
+        for i, t in enumerate(ts):
+            theta = t + theta_off
+            z = z_start + z_off + pitch * t / (2 * np.pi)
+            r_vals = local_ring[:, 1]
+            dz_vals = local_ring[:, 0]
+            rings[i, :, 0] = r_vals * np.cos(theta)
+            rings[i, :, 1] = r_vals * np.sin(theta)
+            rings[i, :, 2] = z + dz_vals
+
+        tris = []
+        for i in range(n_steps - 1):
+            for j in range(M):
+                j2 = (j + 1) % M
+                a, b = rings[i, j], rings[i, j2]
+                c, d = rings[i + 1, j2], rings[i + 1, j]
+                tris.append((a, b, c))
+                tris.append((a, c, d))
+        for ring_pts in (rings[0], rings[-1]):
+            center = ring_pts.mean(axis=0)
+            for j in range(M):
+                j2 = (j + 1) % M
+                tris.append((center, ring_pts[j], ring_pts[j2]))
+
+        all_tris.append(np.array(tris))
+
+    return drop_degenerate(np.concatenate(all_tris, axis=0))
+
+
+# ======================================================================
+#  FLOSSEN: konvexe Huelle ueber 4 Hilfskugeln, buendig auf der Ringzone
+# ======================================================================
+def sphere_points(center, radius, n_points=KUGEL_PUNKTE):
+    i = np.arange(n_points)
+    phi = np.arccos(1 - 2 * (i + 0.5) / n_points)
+    golden = np.pi * (1 + 5 ** 0.5)
+    theta = golden * i
+    x = np.sin(phi) * np.cos(theta)
+    y = np.sin(phi) * np.sin(theta)
+    z = np.cos(phi)
+    return np.stack([x, y, z], axis=1) * radius + center
+
+
+def build_fins(aussen_r, z_top, z_bottom):
+    r_wurzel = FLOSSEN_WURZEL_DICKE_CM * CM / 2
+    r_spitze = FLOSSEN_SPITZE_DICKE_CM * CM / 2
+    embed = FLOSSEN_EINBETTUNG_CM * CM
+    fillet_wurzel = FLOSSEN_WURZEL_VERRUNDUNG_CM * CM
+    spannweite = FLOSSEN_SPANNWEITE_CM * CM
+    wurzel_laenge = FLOSSEN_WURZEL_LAENGE_CM * CM
+    spitze_laenge = FLOSSEN_SPITZE_LAENGE_CM * CM
+    pfeilung = FLOSSEN_PFEILUNG_CM * CM
+
+    root_front_z = z_top
+    root_back_z = z_top - wurzel_laenge
+    tip_front_z = z_top - pfeilung
+    tip_back_z = z_top - pfeilung - spitze_laenge
+
+    centers_radii = [
+        (np.array([aussen_r - embed, 0.0, root_front_z]), r_wurzel + fillet_wurzel),
+        (np.array([aussen_r - embed, 0.0, root_back_z]), r_wurzel + fillet_wurzel * 0.6),
+        (np.array([aussen_r + spannweite, 0.0, tip_front_z]), r_spitze),
+        (np.array([aussen_r + spannweite, 0.0, tip_back_z]), r_spitze),
+    ]
+
+    all_points = np.vstack([sphere_points(c, r) for c, r in centers_radii])
+    hull = ConvexHull(all_points)
+    tris = all_points[hull.simplices]
+    normals_ref = hull.equations[:, :3]
+    edge1 = tris[:, 1] - tris[:, 0]
+    edge2 = tris[:, 2] - tris[:, 0]
+    normals_calc = np.cross(edge1, edge2)
+    dots = np.einsum('ij,ij->i', normals_calc, normals_ref)
+    flip = dots < 0
+    tris[flip] = tris[flip][:, [0, 2, 1], :]
+    fin_local = tris
+
+    all_fins = []
+    for k in range(FLOSSEN_ANZAHL):
+        angle = 2 * np.pi * k / FLOSSEN_ANZAHL
+        c, s = np.cos(angle), np.sin(angle)
+        R = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+        all_fins.append(fin_local @ R.T)
+    return np.concatenate(all_fins, axis=0)
+
+
+# ======================================================================
+#  Kalibrier-Ring: nur ein kurzer Gewindering zum Testdrucken
+# ======================================================================
+def build_kalibrierring():
+    major_r = GEWINDE_AUSSEN_DURCHMESSER_CM * CM / 2
+    minor_r = GEWINDE_KERN_DURCHMESSER_CM * CM / 2 + GEWINDE_SPIEL_CM * CM
+    wand = GEWINDE_WANDSTAERKE_CM * CM
+    aussen_r = major_r + wand
+    ring_hoehe = KALIBRIERRING_HOEHE_CM * CM
+
+    corners = [
+        (np.array([major_r, 0.0]), 1.0),
+        (np.array([major_r, -ring_hoehe]), 1.0),
+        (np.array([aussen_r, -ring_hoehe]), 1.0),
+        (np.array([aussen_r, 0.0]), 1.0),
+    ]
+    profile = build_profile_from_corners(corners)
+    huelle = revolve_profile(profile)
+
+    pitch = GEWINDE_STEIGUNG_CM * CM
+    zahnbreite = GEWINDE_ZAHNBREITE_CM * CM
+    gewinde_hoehe = min(GEWINDE_HOEHE_CM * CM, ring_hoehe * 0.8)
+    z_start = -ring_hoehe + (ring_hoehe - gewinde_hoehe) / 2
+
+    global FILLET_ZAHN
+    FILLET_ZAHN = min(0.03 * CM, (major_r - minor_r) * 0.3)
+
+    gewinde = build_helical_thread(major_r, minor_r, pitch, GEWINDE_STARTS,
+                                    gewinde_hoehe, zahnbreite, z_start)
+    return np.concatenate([huelle, gewinde], axis=0)
+
+
+# ======================================================================
+#  VOLLES BAUTEIL: Gewinde (oben) + Ringzone/Flossen + Uebergang +
+#  Schlauchtuelle mit Widerhaken (unten)
+# ======================================================================
+def build_adapter_voll():
+    major_r = GEWINDE_AUSSEN_DURCHMESSER_CM * CM / 2
+    minor_r = GEWINDE_KERN_DURCHMESSER_CM * CM / 2 + GEWINDE_SPIEL_CM * CM
+    wand = GEWINDE_WANDSTAERKE_CM * CM
+    aussen_r_ring = major_r + wand
+
+    schulter_r = FLASCHEN_SCHULTER_DURCHMESSER_CM * CM / 2 + SCHULTER_SPIEL_CM * CM
+    aussen_r_schulter = schulter_r + wand
+    ueberlapp_tiefe = UEBERLAPP_TIEFE_CM * CM
+    uebergang_oben_laenge = UEBERGANG_OBEN_LAENGE_CM * CM
+    uebergang_oben_fillet = UEBERGANG_OBEN_VERRUNDUNG_CM * CM
+
+    ring_hoehe = RING_HOEHE_CM * CM
+    gewinde_hoehe = GEWINDE_HOEHE_CM * CM
+    rand_radius = RAND_VERRUNDUNG_CM * CM
+    uebergang_unten_laenge = UEBERGANG_UNTEN_LAENGE_CM * CM
+    uebergang_unten_fillet = UEBERGANG_UNTEN_VERRUNDUNG_CM * CM
+
+    schlauch_r = SCHLAUCH_INNENDURCHMESSER_CM * CM / 2
+    tuelle_r = schlauch_r + TUELLE_UEBERMASS_CM * CM
+    tuelle_laenge = TUELLE_LAENGE_CM * CM
+    rippen_hoehe = TUELLE_RIPPEN_HOEHE_CM * CM
+    kanal_r = KANAL_DURCHMESSER_CM * CM / 2
+
+    # Hoehen-Ebenen (z=0 OBEN = grosse Oeffnung, schluckt die Schulter;
+    # abwaerts negativ, Richtung Tuelle/Schlauchanschluss)
+    z0 = 0.0
+    z1 = z0 - ueberlapp_tiefe                    # Ende Schulter-Ueberlapp-Zone
+    z2 = z1 - uebergang_oben_laenge               # Ende oberer Trichter -> hier beginnt das Gewinde
+    z3 = z2 - gewinde_hoehe                       # Ende Gewindezone
+    z4 = z3 - ring_hoehe                          # Ende Ringzone (Flossen zwischen z2 und z4)
+    z5 = z4 - uebergang_unten_laenge              # Ende unterer Uebergang, Tuelle beginnt
+    z6 = z5 - tuelle_laenge                       # offenes Ende der Tuelle
+
+    # --- Aussenkontur ---
+    corners = [
+        (np.array([aussen_r_schulter, z0]), rand_radius),          # oben: grosse offene Oeffnung (Schulter)
+        (np.array([aussen_r_schulter, z1]), uebergang_oben_fillet),  # Ende Ueberlapp-Zone
+        (np.array([aussen_r_ring, z2]), uebergang_oben_fillet),      # Ende oberer Trichter, Gewinde beginnt
+        (np.array([aussen_r_ring, z4]), uebergang_unten_fillet),     # Ende Gewinde+Ringzone (Flossen dazwischen)
+        (np.array([tuelle_r, z5]), uebergang_unten_fillet),          # Ende unterer Uebergang, Tuellenbreite
+    ]
+
+    # Widerhaken-Rippen entlang der Tuelle
+    seg = tuelle_laenge / TUELLE_RIPPEN_ANZAHL
+    for i in range(TUELLE_RIPPEN_ANZAHL):
+        z_talsohle = z5 - seg * i
+        z_peak = z_talsohle - seg * 0.35
+        z_naechstes_tal = z_talsohle - seg
+        corners.append((np.array([tuelle_r + rippen_hoehe, z_peak]), rippen_hoehe * 0.4))
+        corners.append((np.array([tuelle_r, z_naechstes_tal]), rippen_hoehe * 0.3))
+
+    corners.append((np.array([tuelle_r, z6]), 0.4 * CM * 0.25))     # offenes Ende der Tuelle
+
+    # --- Innenkontur (Kanal), von unten (Tuellenoeffnung) nach oben ---
+    corners += [
+        (np.array([kanal_r, z6]), 0.15 * CM),                        # unten: Kanaloeffnung an der Tuelle
+        (np.array([kanal_r, z5]), uebergang_unten_fillet),           # Kanal konstant durch die Tuelle
+        (np.array([major_r, z4]), uebergang_unten_fillet),           # Kanal weitet sich auf Gewindebreite
+        (np.array([major_r, z2]), uebergang_oben_fillet),            # Kanal konstant durch Ring+Gewindezone
+        (np.array([schulter_r, z1]), uebergang_oben_fillet),         # Kanal weitet sich auf Schulterbreite
+        (np.array([schulter_r, z0]), rand_radius),                   # Kanal konstant hoch zur Oeffnung
+    ]
+
+    profile = build_profile_from_corners(corners)
+    huelle = revolve_profile(profile)
+
+    # Sicherheits-Check: Restwand am kritischen Uebergangspunkt (z1)
+    rest_bei_z1 = aussen_r_schulter - schulter_r
+    print(f"  [Check] Restwand am Schulter-Uebergang: {rest_bei_z1:.1f}mm "
+          f"({'OK' if rest_bei_z1 >= 1.5 else 'WARNUNG: zu duenn!'})")
+
+    zahnbreite = GEWINDE_ZAHNBREITE_CM * CM
+    global FILLET_ZAHN
+    FILLET_ZAHN = min(0.03 * CM, (major_r - minor_r) * 0.3)
+    gewinde = build_helical_thread(major_r, minor_r, GEWINDE_STEIGUNG_CM * CM, GEWINDE_STARTS,
+                                    gewinde_hoehe, zahnbreite, z2)
+
+    fins = build_fins(aussen_r_ring, z2, z4)
+
+    return np.concatenate([huelle, gewinde, fins], axis=0)
+
+
+# ======================================================================
+#  Hauptprogramm
+# ======================================================================
+def main():
+    print(f"Modus: {MODUS}")
+    print(f"Gewinde: Aussen-D={GEWINDE_AUSSEN_DURCHMESSER_CM}cm, "
+          f"Kern-D={GEWINDE_KERN_DURCHMESSER_CM}cm, Steigung={GEWINDE_STEIGUNG_CM}cm, "
+          f"{GEWINDE_STARTS} Gaenge")
+
+    if MODUS == "kalibrierung":
+        tris = build_kalibrierring()
+        print("Kalibrier-Gewindering erzeugt - ERST diesen testen, bevor du das ganze Bauteil druckst!")
+    else:
+        tris = build_adapter_voll()
+        print("Kompletter Flossen-Nozzle-Adapter erzeugt.")
+
+    write_binary_stl(AUSGABE_DATEI, tris)
+    print(f"Fertig: {AUSGABE_DATEI}  ({len(tris)} Dreiecke)")
+
+    pts = tris.reshape(-1, 3)
+    print("Bounding Box (mm):")
+    print("  X:", pts[:, 0].min(), "bis", pts[:, 0].max())
+    print("  Y:", pts[:, 1].min(), "bis", pts[:, 1].max())
+    print("  Z:", pts[:, 2].min(), "bis", pts[:, 2].max())
+
+    if insert_into_freecad(AUSGABE_DATEI, "FlossenAdapter"):
+        print("Mesh wurde in FreeCAD eingefuegt und angezeigt.")
+    else:
+        print("(Nicht in FreeCAD - versuche Standard-Viewer zu oeffnen.)")
+        open_file_os(AUSGABE_DATEI)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,256 @@
+#!/usr/bin/env python3
+# ======================================================================
+#  WASSERRAKETE - SPITZE FUER DAS GESCHLOSSENE FLASCHENENDE (GEKLEBT)
+#  Wird UEBER den Flaschenboden gestuelpt (umarmt die Flasche von aussen,
+#  genau wie die Gewinde-Spitze auf der anderen Seite) und dort
+#  festgeklebt - KEIN Gewinde noetig, da dieses Ende der Flasche keine
+#  Struktur zum Schrauben hat. Leicht abgerundete, aerodynamische Kuppe.
+#
+#  ALLE MASSE IN ZENTIMETER (cm). Skript rechnet intern in mm um.
+#  Abhaengigkeiten: nur numpy + scipy (kein CadQuery/OpenSCAD noetig)
+# ======================================================================
+
+import os
+import numpy as np
+import struct
+
+CM = 10.0   # 1 cm = 10 mm -> Umrechnungsfaktor, NICHT AENDERN
+
+# ======================================================================
+#  PARAMETER - HIER DEINE GEMESSENEN WERTE EINTRAGEN
+# ======================================================================
+
+# --- Flasche (geschlossenes Ende, wo diese Spitze aufgeklebt wird) ---
+FLASCHEN_DURCHMESSER_CM = 6.3   # cm - Aussendurchmesser der Flasche dort, wo die Spitze aufgeklebt
+                                  #      wird (Koerper/Schulter-Bereich). NACHMESSEN!
+SPIEL_CM                = 0.15  # cm - Spiel, damit die Flasche leicht reingleitet (Kleberaum)
+
+# --- Klebezone: hier ist es innen hohl, hier kommt der Kleber rein ---
+KLEBE_TIEFE_CM   = 2.0   # cm - wie tief die Spitze ueber die Flasche greift / wie viel
+                           #      Flaeche zum Verkleben zur Verfuegung steht
+WANDSTAERKE_CM   = 0.3   # cm - Wandstaerke rund um die Klebezone
+RAND_VERRUNDUNG_CM = 0.15  # cm - Verrundung am unteren offenen Rand
+
+# --- Kuppe: LEICHT abgerundet (kein spitzer Speer, eher sanfte, runde
+#     aerodynamische Nase) - kurze Laenge relativ zum Durchmesser ergibt
+#     automatisch einen weichen, runden Look statt einer scharfen Spitze ---
+KUPPE_LAENGE_CM = 8.0    # cm - Laenge der Kuppe oberhalb der Klebezone bis zum Scheitel
+
+# --- Aufloesung ---
+N_THETA        = 128
+FILLET_SEGMENTE = 8
+OGIVEN_PUNKTE  = 40
+
+AUSGABE_DATEI = os.path.join(os.path.expanduser("~"), "Desktop", "spitze_boden_geklebt.stl")
+
+
+# ======================================================================
+#  Generische Hilfsfunktionen (2D-Eckenverrundung, Revolve, STL-Export)
+# ======================================================================
+def unit2(v):
+    n = np.linalg.norm(v)
+    return v / n if n > 1e-12 else v
+
+
+def fillet_corner_2d(p_prev, p_corner, p_next, radius, n_seg=FILLET_SEGMENTE):
+    if radius <= 1e-9:
+        return [p_corner]
+    v1, v2 = p_prev - p_corner, p_next - p_corner
+    len1, len2 = np.linalg.norm(v1), np.linalg.norm(v2)
+    if len1 < 1e-9 or len2 < 1e-9:
+        return [p_corner]
+    u1, u2 = v1 / len1, v2 / len2
+    ang = np.arccos(np.clip(np.dot(u1, u2), -1.0, 1.0))
+    if ang < 1e-6 or ang > np.pi - 1e-6:
+        return [p_corner]
+    tan_dist = radius / np.tan(ang / 2)
+    tan_dist = min(tan_dist, len1 * 0.9, len2 * 0.9)
+    r_eff = tan_dist * np.tan(ang / 2)
+    t1 = p_corner + u1 * tan_dist
+    t2 = p_corner + u2 * tan_dist
+    bis = unit2(u1 + u2)
+    center = p_corner + bis * (r_eff / np.sin(ang / 2))
+    a1 = np.arctan2(t1[1] - center[1], t1[0] - center[0])
+    a2 = np.arctan2(t2[1] - center[1], t2[0] - center[0])
+    da = (a2 - a1 + np.pi) % (2 * np.pi) - np.pi
+    return [center + r_eff * np.array([np.cos(a1 + da * k / n_seg),
+                                        np.sin(a1 + da * k / n_seg)])
+            for k in range(n_seg + 1)]
+
+
+def build_profile_from_corners(corners):
+    pts_only = [c[0] for c in corners]
+    n = len(corners)
+    profile = []
+    for i in range(n):
+        p_prev = pts_only[i - 1]
+        p_corner, radius = corners[i]
+        p_next = pts_only[(i + 1) % n]
+        profile.extend(fillet_corner_2d(p_prev, p_corner, p_next, radius))
+    return np.array(profile)
+
+
+def revolve_profile(profile_2d):
+    M = len(profile_2d)
+    thetas = np.linspace(0, 2 * np.pi, N_THETA, endpoint=False)
+    verts = np.zeros((N_THETA, M, 3))
+    for i, th in enumerate(thetas):
+        verts[i, :, 0] = profile_2d[:, 0] * np.cos(th)
+        verts[i, :, 1] = profile_2d[:, 0] * np.sin(th)
+        verts[i, :, 2] = profile_2d[:, 1]
+    triangles = []
+    for i in range(N_THETA):
+        i2 = (i + 1) % N_THETA
+        for j in range(M):
+            j2 = (j + 1) % M
+            a, b = verts[i, j], verts[i, j2]
+            c, d = verts[i2, j2], verts[i2, j]
+            triangles.append((a, b, c))
+            triangles.append((a, c, d))
+    tri = np.array(triangles)
+    return drop_degenerate(fix_orientation_outward(tri))
+
+
+def fix_orientation_outward(tri):
+    centroids = tri.mean(axis=1)
+    r_xy = np.linalg.norm(centroids[:, :2], axis=1)
+    idx = np.argmax(r_xy)
+    a, b, c = tri[idx]
+    normal = np.cross(b - a, c - a)
+    outward_ref = np.array([centroids[idx, 0], centroids[idx, 1], 0.0])
+    if np.dot(normal, outward_ref) < 0:
+        tri = tri[:, [0, 2, 1], :]
+    return tri
+
+
+def drop_degenerate(tri, min_area=1e-8):
+    a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
+    areas = 0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1)
+    return tri[areas > min_area]
+
+
+def write_binary_stl(path, triangles, header=b"Spitze Boden Geklebt"):
+    n = len(triangles)
+    with open(path, "wb") as f:
+        f.write(header.ljust(80, b"\0")[:80])
+        f.write(struct.pack("<I", n))
+        for tri in triangles:
+            a, b, c = tri
+            normal = np.cross(b - a, c - a)
+            norm_len = np.linalg.norm(normal)
+            if norm_len > 1e-12:
+                normal = normal / norm_len
+            f.write(struct.pack("<3f", *normal))
+            for v in (a, b, c):
+                f.write(struct.pack("<3f", *v))
+            f.write(struct.pack("<H", 0))
+
+
+def open_file_os(path):
+    try:
+        import platform
+        import subprocess
+        system = platform.system()
+        if system == "Darwin":
+            subprocess.run(["open", path], check=False)
+        elif system == "Windows":
+            os.startfile(path)  # noqa
+        else:
+            subprocess.run(["xdg-open", path], check=False)
+    except Exception as e:
+        print(f"Konnte Datei nicht automatisch oeffnen ({e}). Bitte manuell oeffnen: {path}")
+
+
+def insert_into_freecad(path, doc_name):
+    try:
+        import FreeCAD
+        import Mesh
+        doc = FreeCAD.ActiveDocument
+        if doc is None:
+            doc = FreeCAD.newDocument(doc_name)
+        Mesh.insert(path, doc.Name)
+        doc.recompute()
+        try:
+            FreeCADGui = __import__("FreeCADGui")
+            FreeCADGui.ActiveDocument.ActiveView.viewIsometric()
+            FreeCADGui.SendMsgToActiveView("ViewFit")
+        except Exception:
+            pass
+        return True
+    except ImportError:
+        return False
+
+
+# ======================================================================
+#  SPITZE: grosse Oeffnung (umarmt die Flasche) -> Klebezone (hohl) ->
+#  massive, leicht abgerundete Kuppe (aussen EINE durchgehende Kurve,
+#  keine Stufe)
+# ======================================================================
+def build_spitze():
+    flasche_r = FLASCHEN_DURCHMESSER_CM * CM / 2 + SPIEL_CM * CM
+    wand = WANDSTAERKE_CM * CM
+    aussen_r = flasche_r + wand
+
+    klebe_tiefe = KLEBE_TIEFE_CM * CM
+    kuppe_laenge = KUPPE_LAENGE_CM * CM
+    rand_radius = RAND_VERRUNDUNG_CM * CM
+
+    # z=0 unten (offener Rand, wird ueber die Flasche gestuelpt), aufwaerts positiv
+    z0 = 0.0
+    z1 = klebe_tiefe        # Ende der hohlen Klebezone, hier beginnt die massive Kuppe
+    z2 = z1 + kuppe_laenge  # Scheitel der Kuppe
+
+    total_laenge = z2
+
+    # --- Aussenkontur: EINE durchgehende Tangent-Ogive ueber die
+    #     GESAMTE Laenge (z0 bis z2) - komplett glatt, keine Stufe.
+    #     Kurze Kuppe relativ zum Durchmesser = weiche, runde Nase
+    #     statt scharfer Spitze. ---
+    x = np.linspace(0.0, total_laenge, OGIVEN_PUNKTE)
+    rho = (aussen_r ** 2 + total_laenge ** 2) / (2 * aussen_r)
+    y = np.sqrt(np.maximum(rho ** 2 - x ** 2, 0.0)) + aussen_r - rho
+    aussen_kurve = np.stack([y, x], axis=1)
+    aussen_kurve[0] = [aussen_r, z0]
+    aussen_kurve[-1] = [0.0, z2]
+
+    innen_punkte = [
+        (np.array([0.0, z1]), 0.0),                 # "Dach" der Klebezone, auf der Achse
+        (np.array([flasche_r, z1]), rand_radius),   # Dach weitet sich zur Flaschenbreite
+        (np.array([flasche_r, z0]), rand_radius),   # runter zur Oeffnung
+    ]
+
+    corners = [(p, 0.0) for p in aussen_kurve] + innen_punkte
+    profile = build_profile_from_corners(corners)
+    tris = revolve_profile(profile)
+
+    rest_bei_z1 = np.sqrt(max(rho ** 2 - z1 ** 2, 0.0)) + aussen_r - rho - flasche_r
+    print(f"  [Check] Restwand am Ende der Klebezone (z={z1:.1f}mm): {rest_bei_z1:.1f}mm "
+          f"({'OK' if rest_bei_z1 >= 1.5 else 'WARNUNG: KUPPE_LAENGE_CM erhoehen, Wand zu duenn!'})")
+
+    return tris
+
+
+# ======================================================================
+#  Hauptprogramm
+# ======================================================================
+def main():
+    print("=== Spitze fuer geschlossenes Flaschenende (geklebt) ===")
+    tris = build_spitze()
+    write_binary_stl(AUSGABE_DATEI, tris)
+    print(f"Fertig: {AUSGABE_DATEI}  ({len(tris)} Dreiecke)")
+
+    pts = tris.reshape(-1, 3)
+    print("Bounding Box (mm):")
+    print("  X:", pts[:, 0].min(), "bis", pts[:, 0].max())
+    print("  Y:", pts[:, 1].min(), "bis", pts[:, 1].max())
+    print("  Z:", pts[:, 2].min(), "bis", pts[:, 2].max())
+
+    if insert_into_freecad(AUSGABE_DATEI, "SpitzeGeklebt"):
+        print("Mesh wurde in FreeCAD eingefuegt und angezeigt.")
+    else:
+        print("(Nicht in FreeCAD - versuche Standard-Viewer zu oeffnen.)")
+        open_file_os(AUSGABE_DATEI)
+
+
+if __name__ == "__main__":
+    main()
