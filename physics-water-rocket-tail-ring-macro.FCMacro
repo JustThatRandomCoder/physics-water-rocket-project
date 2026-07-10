@@ -43,7 +43,7 @@ HALS_LAENGE_BIS_VERSCHLUSS_CM = 5.5   # cm - Abstand von der Schulter bis dort, 
 WANDSTAERKE_CM        = 0.3    # cm - Wandstaerke der Huelle
 GESAMTLAENGE_CM       = 5.2    # cm - Laenge der S-Kurve von Schulter- auf Halsbreite
                                 #      (MUSS kleiner als HALS_LAENGE_BIS_VERSCHLUSS_CM sein!)
-KOERPER_UEBERLAPP_CM  = 3.0    # cm - ZUSAETZLICHES gerades Stueck OBERHALB der Schulter-Kurve,
+KOERPER_UEBERLAPP_CM  = 4.0    # cm - ZUSAETZLICHES gerades Stueck OBERHALB der Schulter-Kurve,
                                 #      das weiter den zylindrischen Flaschenkoerper hochgeht.
                                 #      Macht das Teil hoeher, OHNE es dicker zu machen.
 RAND_VERRUNDUNG_OBEN_CM  = 0.4  # cm - Verrundung am oberen (weiten) Rand
@@ -53,15 +53,16 @@ RAND_VERRUNDUNG_UNTEN_CM = 0.25 # cm - Verrundung am unteren (Deckel-Loch) Rand
 #  PARAMETER: FLOSSEN (sitzen auf dem Cone, Position von oben gemessen)
 # ======================================================================
 FLOSSEN_ANZAHL           = 4
-FLOSSEN_Z_POSITION_CM    = 1.5    # cm - Position INNERHALB des geraden Koerper-Ueberlapp-Stuecks
+FLOSSEN_Z_POSITION_CM    = 2.0    # cm - Position INNERHALB des geraden Koerper-Ueberlapp-Stuecks
                                    #      (gemessen ab dem Beginn der S-Kurve nach OBEN). Hier ist
                                    #      die Wand konstant dick - garantiert kein Durchstossen.
-FLOSSEN_SPANNWEITE_CM    = 6.0    # cm - radiale Ausdehnung nach aussen
-FLOSSEN_WURZEL_LAENGE_CM = 2.8    # cm - Sehnenlaenge an der Wurzel
-FLOSSEN_SPITZE_LAENGE_CM = 1.0    # cm - Sehnenlaenge an der Spitze (kurz = schlanker/spitzer)
-FLOSSEN_PFEILUNG_CM      = 1.8    # cm - staerkere Rueckwaertspfeilung = aerodynamischer, schlankerer Look
-FLOSSEN_WURZEL_DICKE_CM  = 0.35   # cm - duenner als vorher
-FLOSSEN_SPITZE_DICKE_CM  = 0.12   # cm - sehr duenn/spitz an der Aussenkante
+FLOSSEN_SPANNWEITE_CM    = 6.0    # cm - radiale Ausdehnung nach aussen (Wurzel bis zur Spitze)
+FLOSSEN_WURZEL_LAENGE_CM = 3.2    # cm - Breite der runden Wurzel (der "Bauch" des Tropfens)
+FLOSSEN_PFEILUNG_CM      = 2.2    # cm - wie weit die Spitze (der "Tropfen-Schwanz") nach hinten
+                                   #      versetzt ist relativ zur Wurzel-Mitte - mehr = aerodynamischer
+FLOSSEN_WURZEL_DICKE_CM  = 0.4    # cm - Dicke/Rundung an der Wurzel (Tropfen-"Bauch")
+FLOSSEN_SPITZE_DICKE_CM  = 0.35   # cm - Rundung an der Spitze (KEIN spitzer Punkt, sondern
+                                   #      leicht abgerundete Kuppe - groesser = rundlicher)
 FLOSSEN_EINBETTUNG_CM    = 0.03  # cm - MINIMAL, nur zum Verschmelzen mit der Huelle
 FLOSSEN_WURZEL_VERRUNDUNG_CM = 0.03  # cm - kleine Verrundung, absichtlich klein gehalten
 
@@ -258,13 +259,14 @@ def build_fins(z_mitte, z0, z1, schulter_r, hals_r, aussen_r_oben, aussen_r_unte
     fillet_wurzel = FLOSSEN_WURZEL_VERRUNDUNG_CM * CM
     spannweite = FLOSSEN_SPANNWEITE_CM * CM
     wurzel_laenge = FLOSSEN_WURZEL_LAENGE_CM * CM
-    spitze_laenge = FLOSSEN_SPITZE_LAENGE_CM * CM
     pfeilung = FLOSSEN_PFEILUNG_CM * CM
 
+    # Tropfenform: breite, runde Wurzel (2 Kugeln bilden den "Bauch")
+    # verjuengt sich zu EINEM einzigen Punkt an der Spitze (der "Schwanz")
+    # - kein Trapez mit zwei Spitzen-Ecken mehr, sondern ein echter Tropfen.
     root_front_z = z_mitte + wurzel_laenge / 2
     root_back_z = root_front_z - wurzel_laenge
-    tip_front_z = z_mitte + wurzel_laenge / 2 - pfeilung
-    tip_back_z = tip_front_z - spitze_laenge
+    tip_z = z_mitte - pfeilung   # EIN Punkt, nach hinten versetzt (Pfeilung)
 
     SICHERHEITSABSTAND = 0.06 * CM  # mm Restwand, die IMMER stehen bleiben muss
 
@@ -280,7 +282,7 @@ def build_fins(z_mitte, z0, z1, schulter_r, hals_r, aussen_r_oben, aussen_r_unte
         return center_x, radius
 
     root_front_x, root_front_kugel = geklemmte_wurzel(root_front_z, r_wurzel + fillet_wurzel)
-    root_back_x, root_back_kugel = geklemmte_wurzel(root_back_z, r_wurzel + fillet_wurzel * 0.6)
+    root_back_x, root_back_kugel = geklemmte_wurzel(root_back_z, r_wurzel + fillet_wurzel)
 
     _, lokaler_aussen_r_fuer_spitze = lokale_radien(root_front_z, z0, z1, schulter_r, hals_r,
                                                      aussen_r_oben, aussen_r_unten)
@@ -289,8 +291,7 @@ def build_fins(z_mitte, z0, z1, schulter_r, hals_r, aussen_r_oben, aussen_r_unte
     centers_radii = [
         (np.array([root_front_x, 0.0, root_front_z]), root_front_kugel),
         (np.array([root_back_x, 0.0, root_back_z]), root_back_kugel),
-        (np.array([tip_x, 0.0, tip_front_z]), r_spitze),
-        (np.array([tip_x, 0.0, tip_back_z]), r_spitze),
+        (np.array([tip_x, 0.0, tip_z]), r_spitze),
     ]
 
     all_points = np.vstack([sphere_points(c, r) for c, r in centers_radii])
