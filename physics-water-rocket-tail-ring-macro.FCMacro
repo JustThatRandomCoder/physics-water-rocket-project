@@ -22,20 +22,19 @@ CM = 10.0   # 1 cm = 10 mm -> Umrechnungsfaktor, NICHT AENDERN
 # ======================================================================
 #  PARAMETER: FLASCHE
 # ======================================================================
-FLASCHEN_SCHULTER_DURCHMESSER_CM = 6.3   # cm - Aussendurchmesser an der Schulter (oben, wo das
-                                           #      Teil aufgesetzt wird). NACHMESSEN!
-SCHULTER_SPIEL_CM = 0.2                    # cm - Spiel, damit es leicht draufgleitet (Presssitz-Reserve)
+FLASCHEN_SCHULTER_DURCHMESSER_CM = 7.0   # cm - GEMESSEN (Maßband, zweimal konsistent bestaetigt)
+SCHULTER_SPIEL_CM = 0.3                    # cm - erhoeht (3mm) wegen Massband-statt-Schieblehre-Ungenauigkeit
 
-FLASCHEN_HALS_DURCHMESSER_CM = 2.2   # cm - Aussendurchmesser des GLATTEN Halses, UNTERHALB der
-                                       #      Schulter aber OBERHALB des Verschlusses/Gewindes.
-                                       #      NACHMESSEN! Das Teil hoert HIER auf - der Verschluss
-                                       #      selbst bleibt komplett frei/unbedeckt darunter.
-HALS_SPIEL_CM = 0.2   # cm - Luft am unteren Rand, damit es leicht ueber den Hals passt
+FLASCHEN_HALS_DURCHMESSER_CM = 3.8   # cm - GEMESSEN (Kappenbreite als Sicherheitswert genommen,
+                                       #      echter glatter Hals ist evtl. minimal schmaler - das ist
+                                       #      die sichere Richtung, Oeffnung wird dadurch nie zu eng)
+HALS_SPIEL_CM = 0.3   # cm - erhoeht (3mm) wegen Massband-statt-Schieblehre-Ungenauigkeit
 
-HALS_LAENGE_BIS_VERSCHLUSS_CM = 5.5   # cm - Abstand von der Schulter bis dort, wo der
-                                        #      Verschluss/das Gewinde beginnt. NACHMESSEN!
-                                        #      GESAMTLAENGE_CM MUSS kleiner sein als dieser Wert,
-                                        #      sonst umschliesst das Teil den Verschluss doch.
+HALS_LAENGE_BIS_VERSCHLUSS_CM = 5.5   # cm - NOCH NICHT GEMESSEN, Platzhalter! Bitte nachmessen:
+                                        #      Laenge von da, wo die Schulter zu Ende rundet, bis zum
+                                        #      Anfang des Verschluss-Gewindes. GESAMTLAENGE_CM MUSS
+                                        #      kleiner sein als dieser Wert, sonst umschliesst das Teil
+                                        #      den Verschluss doch.
 
 # ======================================================================
 #  PARAMETER: GEOMETRIE DES CONES
