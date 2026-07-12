@@ -21,13 +21,19 @@ CM = 10.0   # 1 cm = 10 mm -> Umrechnungsfaktor, NICHT AENDERN
 # ======================================================================
 
 # --- Flasche (geschlossenes Ende, wo diese Spitze aufgeklebt wird) ---
-FLASCHEN_DURCHMESSER_CM = 6.3   # cm - Aussendurchmesser der Flasche dort, wo die Spitze aufgeklebt
-                                  #      wird (Koerper/Schulter-Bereich). NACHMESSEN!
-SPIEL_CM                = 0.15  # cm - Spiel, damit die Flasche leicht reingleitet (Kleberaum)
+FLASCHEN_DURCHMESSER_CM = 7.0   # cm - GEMESSEN: Koerperdurchmesser (NICHT die schmale Fussspitze
+                                  #      unten nehmen - das Teil muss beim Aufschieben ueber die
+                                  #      BREITESTE Stelle rutschen, das ist der Koerper)
+SPIEL_CM                = 0.3   # cm - erhoeht (3mm) wegen Massband-statt-Schieblehre-Ungenauigkeit
 
 # --- Klebezone: hier ist es innen hohl, hier kommt der Kleber rein ---
-KLEBE_TIEFE_CM   = 2.0   # cm - wie tief die Spitze ueber die Flasche greift / wie viel
-                           #      Flaeche zum Verkleben zur Verfuegung steht
+KLEBE_TIEFE_CM   = 1.5   # cm - REDUZIERT: nur die zuverlaessig zylindrische Zone direkt unter
+                           #      der Schulter, BEVOR die Bodenrundung/die unregelmaessigen
+                           #      Petaloid-Fuesse anfangen (laut Messung ~1,5cm, danach wird's
+                           #      unregelmaessig - da soll die Klebezone nicht mehr hinreichen)
+KLEBE_DOM_HOEHE_CM = 1.2  # cm - der Hohlraum bekommt oben eine GEWOELBTE Kuppel statt eines
+                           #      flachen Deckels - folgt damit der echten Rundung des
+                           #      Flaschenbodens statt eine flache Scheibe zu sein
 WANDSTAERKE_CM   = 0.3   # cm - Wandstaerke rund um die Klebezone
 RAND_VERRUNDUNG_CM = 0.15  # cm - Verrundung am unteren offenen Rand
 
@@ -192,6 +198,7 @@ def build_spitze():
     aussen_r = flasche_r + wand
 
     klebe_tiefe = KLEBE_TIEFE_CM * CM
+    dom_hoehe = KLEBE_DOM_HOEHE_CM * CM
     kuppe_laenge = KUPPE_LAENGE_CM * CM
     rand_radius = RAND_VERRUNDUNG_CM * CM
 
@@ -213,19 +220,37 @@ def build_spitze():
     aussen_kurve[0] = [aussen_r, z0]
     aussen_kurve[-1] = [0.0, z2]
 
-    innen_punkte = [
-        (np.array([0.0, z1]), 0.0),                 # "Dach" der Klebezone, auf der Achse
-        (np.array([flasche_r, z1]), rand_radius),   # Dach weitet sich zur Flaschenbreite
-        (np.array([flasche_r, z0]), rand_radius),   # runter zur Oeffnung
-    ]
+    # Gewoelbte Kuppel statt flachem Deckel im Hohlraum - folgt der
+    # Rundung des echten Flaschenbodens (Halbkugel-Ansatz: r=flasche_r
+    # bei z1 (Beginn Kuppel), r=0 bei z1+dom_hoehe (Kuppel-Scheitel)).
+    # Reihenfolge: von der Kuppel-Spitze (nahe am aeusseren Scheitel)
+    # ueber die Kuppelkurve zurueck runter zur Wand, dann zur Oeffnung -
+    # so schliesst sich die Schleife korrekt an die Aussenkontur an.
+    n_dom = 20
+    tt = np.linspace(1.0, 0.0, n_dom)   # 1 -> 0: Spitze zuerst, dann runter zur Wand
+    dom_r = flasche_r * np.sqrt(np.maximum(1.0 - tt ** 2, 0.0))
+    dom_z = z1 + dom_hoehe * tt
+    dom_r[0] = 0.0  # exakte Kuppel-Spitze garantieren
+
+    innen_punkte = [(np.array([r_pt, z_pt]), 0.0) for r_pt, z_pt in zip(dom_r, dom_z)]
+    innen_punkte[-1] = (np.array([flasche_r, z1]), rand_radius)   # Kuppel endet, Wand beginnt
+    innen_punkte.append((np.array([flasche_r, z0]), rand_radius))  # runter zur Oeffnung
 
     corners = [(p, 0.0) for p in aussen_kurve] + innen_punkte
     profile = build_profile_from_corners(corners)
     tris = revolve_profile(profile)
 
-    rest_bei_z1 = np.sqrt(max(rho ** 2 - z1 ** 2, 0.0)) + aussen_r - rho - flasche_r
-    print(f"  [Check] Restwand am Ende der Klebezone (z={z1:.1f}mm): {rest_bei_z1:.1f}mm "
-          f"({'OK' if rest_bei_z1 >= 1.5 else 'WARNUNG: KUPPE_LAENGE_CM erhoehen, Wand zu duenn!'})")
+    # Restwand an mehreren Punkten entlang der Kuppel pruefen (nicht nur
+    # an einer Stelle), da die Kuppel jetzt eine Kurve statt eines
+    # einzelnen flachen Punkts ist.
+    schlimmste_restwand = 1e9
+    for r_pt, z_pt in zip(dom_r, dom_z):
+        aussen_dort = np.sqrt(max(rho ** 2 - z_pt ** 2, 0.0)) + aussen_r - rho
+        rest = aussen_dort - r_pt
+        if rest < schlimmste_restwand:
+            schlimmste_restwand = rest
+    print(f"  [Check] Schlimmste Restwand entlang der Kuppel: {schlimmste_restwand:.1f}mm "
+          f"({'OK' if schlimmste_restwand >= 1.5 else 'WARNUNG: KUPPE_LAENGE_CM erhoehen oder KLEBE_DOM_HOEHE_CM verkleinern!'})")
 
     return tris
 
