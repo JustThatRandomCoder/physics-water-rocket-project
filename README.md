@@ -25,7 +25,7 @@
 | **Author** | Julius Grimm |
 | **Course** | Physics / Engineering |
 | **School** | Uhland-Gymnasium Tübingen |
-| **Date** | 06.07.2026 |
+| **Date** | 06.07.2026 - 13.07.2026 |
 
 ---
 
@@ -87,8 +87,6 @@ Additional aerodynamic components improve stability and flight efficiency.
 - 🪽 Four aerodynamic fins
 - 🧴 0.5 L PET bottle
 - 🔩 Nozzle
-- 🚀 Launch coupling
-- 🎯 Optional parachute recovery system
 
 ---
 
@@ -131,6 +129,31 @@ Additional aerodynamic components improve stability and flight efficiency.
 | Safety Glasses | Personal protection |
 
 ---
+
+---
+
+# 🔧 Design Process & Development
+
+## From Idea to Concept
+
+The initial concept — using custom 3D-printed attachments to turn a standard 0.5 L PET bottle into a stable, aerodynamic water rocket — was developed independently: a fin assembly at the nozzle end for flight stability, and a streamlined nose cone at the closed end to reduce drag. All core design decisions (what parts were needed, how they should attach to the bottle, and what problems needed solving) were made and driven independently throughout the project.
+
+## Measuring the Bottle
+
+Since no calipers were available, all bottle dimensions (shoulder diameter, neck diameter, base diameter, and transition lengths) were measured by hand with a standard tape measure. Because this method is less precise than a caliper, deliberate clearances (2–3 mm instead of sub-millimeter tolerances) were built into every fitting surface to compensate for measurement uncertainty.
+
+## Iterative Design Decisions
+
+Several design iterations were required to reach a working concept:
+
+- **Fin attachment:** Initially considered mounting the fins at the base of the bottle with a separate nozzle/valve insert requiring a drilled hole. This was reconsidered in favor of mounting the fin assembly at the neck end instead, matching the aerodynamically correct configuration for a water rocket launched nozzle-down (fins at the tail, nose cone at the nose).
+- **Attachment method:** A screw-thread design was prototyped to attach the fin piece directly to the bottle's neck threads, replacing the original cap. This was ultimately abandoned in favor of a simpler press-fit design that slides over the shoulder and neck, leaving the original closure fully exposed so a standard, commercially available valve adapter can be screwed directly onto it — reducing print complexity and failure points.
+- **Fin geometry:** Early fin designs used a straight, trapezoidal planform. This was refined into a rounded, teardrop-shaped planform (wide, rounded root tapering to a single rounded tip) for a more aerodynamic profile.
+- **Nose cone:** The nose cone was designed as a press-fit, adhesive-bonded cap for the closed end of the bottle, using a tangent-ogive curve for a smooth, low-drag profile. The internal cavity was shaped to follow the bottle's actual rounded base rather than a flat cutout, and hollowed out (leaving a constant wall thickness) to reduce material and weight without changing the external dimensions.
+
+## CAD Tooling
+
+All parts were modeled parametrically (all key dimensions — diameters, wall thickness, clearances, fin geometry — defined as adjustable variables) and exported as STL files for 3D printing. AI-assisted coding tools were used as a support tool during implementation, to help translate the design decisions above into working parametric CAD scripts.
 
 # 🛡️ Safety
 
