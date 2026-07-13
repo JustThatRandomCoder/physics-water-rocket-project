@@ -220,37 +220,47 @@ def build_spitze():
     aussen_kurve[0] = [aussen_r, z0]
     aussen_kurve[-1] = [0.0, z2]
 
-    # Gewoelbte Kuppel statt flachem Deckel im Hohlraum - folgt der
-    # Rundung des echten Flaschenbodens (Halbkugel-Ansatz: r=flasche_r
-    # bei z1 (Beginn Kuppel), r=0 bei z1+dom_hoehe (Kuppel-Scheitel)).
-    # Reihenfolge: von der Kuppel-Spitze (nahe am aeusseren Scheitel)
-    # ueber die Kuppelkurve zurueck runter zur Wand, dann zur Oeffnung -
-    # so schliesst sich die Schleife korrekt an die Aussenkontur an.
+    def aussen_radius_bei(z_wert):
+        return np.sqrt(np.maximum(rho ** 2 - z_wert ** 2, 0.0)) + aussen_r - rho
+
+    # Gewoelbte Kuppel im Klebebereich (folgt der Flaschenrundung),
+    # geht dann GLATT in eine duenne Schale (Wandstaerke=wand) ueber,
+    # die dem Aussenkontur bis fast zur Spitze folgt - HOHL statt massiv,
+    # spart Material/Gewicht. Schliesst sich erst kurz vor der Spitze
+    # von selbst, wo die Aussenkontur duenner als die Wandstaerke wird.
+    r_nach_kuppel = max(aussen_radius_bei(z1 + dom_hoehe) - wand, 0.0)
+
     n_dom = 20
-    tt = np.linspace(1.0, 0.0, n_dom)   # 1 -> 0: Spitze zuerst, dann runter zur Wand
-    dom_r = flasche_r * np.sqrt(np.maximum(1.0 - tt ** 2, 0.0))
+    tt = np.linspace(1.0, 0.0, n_dom)   # 1 -> 0: Kuppel-Ende zuerst, dann runter zur Wand
+    dom_r = r_nach_kuppel + (flasche_r - r_nach_kuppel) * np.sqrt(np.maximum(1.0 - tt ** 2, 0.0))
     dom_z = z1 + dom_hoehe * tt
-    dom_r[0] = 0.0  # exakte Kuppel-Spitze garantieren
+
+    n_schale = 60
+    schale_z = np.linspace(z1 + dom_hoehe, z2, n_schale)[1:]   # [0] ueberspringen (Dopplung mit Kuppel-Ende)
+    schale_r = np.maximum(aussen_radius_bei(schale_z) - wand, 0.0)
 
     innen_punkte = [(np.array([r_pt, z_pt]), 0.0) for r_pt, z_pt in zip(dom_r, dom_z)]
-    innen_punkte[-1] = (np.array([flasche_r, z1]), rand_radius)   # Kuppel endet, Wand beginnt
-    innen_punkte.append((np.array([flasche_r, z0]), rand_radius))  # runter zur Oeffnung
+    innen_punkte += [(np.array([r_pt, z_pt]), 0.0) for r_pt, z_pt in zip(schale_r, schale_z)]
+    innen_punkte[-1] = (np.array([0.0, z2 - 1e-6]), 0.0)   # Schale schliesst kurz vor der Spitze
+    innen_punkte.append((np.array([flasche_r, z1]), rand_radius))   # zurueck zur Wand am Kuppelbeginn
+    innen_punkte.append((np.array([flasche_r, z0]), rand_radius))   # runter zur Oeffnung
 
     corners = [(p, 0.0) for p in aussen_kurve] + innen_punkte
     profile = build_profile_from_corners(corners)
     tris = revolve_profile(profile)
 
-    # Restwand an mehreren Punkten entlang der Kuppel pruefen (nicht nur
-    # an einer Stelle), da die Kuppel jetzt eine Kurve statt eines
-    # einzelnen flachen Punkts ist.
+    # Restwand entlang der Kuppel pruefen (Schale danach ist per
+    # Konstruktion exakt = wand, muss nicht geprueft werden)
     schlimmste_restwand = 1e9
     for r_pt, z_pt in zip(dom_r, dom_z):
-        aussen_dort = np.sqrt(max(rho ** 2 - z_pt ** 2, 0.0)) + aussen_r - rho
+        aussen_dort = aussen_radius_bei(z_pt)
         rest = aussen_dort - r_pt
         if rest < schlimmste_restwand:
             schlimmste_restwand = rest
     print(f"  [Check] Schlimmste Restwand entlang der Kuppel: {schlimmste_restwand:.1f}mm "
           f"({'OK' if schlimmste_restwand >= 1.5 else 'WARNUNG: KUPPE_LAENGE_CM erhoehen oder KLEBE_DOM_HOEHE_CM verkleinern!'})")
+    print(f"  [Info] Nasenbereich oberhalb der Kuppel ist jetzt hohl (Wandstaerke {WANDSTAERKE_CM}cm),"
+          f" schliesst kurz vor der Spitze automatisch zu massiv.")
 
     return tris
 
